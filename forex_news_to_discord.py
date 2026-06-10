@@ -2,11 +2,13 @@
 """
 forex_news_to_discord.py
 
-Posts a morning brief to a Discord channel via webhook:
-  1. "Red folder" (High-impact) economic events from the Forex Factory calendar feed.
-  2. Recent market-relevant Trump headlines from Google News.
+Posts a pretty morning brief to a Discord channel via webhook:
+  1. "Red folder" (High-impact) economic events from the Forex Factory calendar feed,
+     each with a plain-English "what it is / why it matters" line.
+  2. A "Trump Watch" line built from recent market-relevant Google News headlines.
+  3. Pairs to watch, a rotating market quote, and a sign-off.
 
-No third-party dependencies -- standard library only (works anywhere with Python 3.9+).
+No third-party dependencies -- standard library only (Python 3.9+).
 
 Required environment variable:
   DISCORD_WEBHOOK_URL    Your Discord channel webhook URL.
@@ -14,13 +16,19 @@ Required environment variable:
 Optional environment variables (defaults in brackets):
   TIMEZONE               IANA tz name for "today" + display.        [Europe/London]
   CURRENCIES             Comma list to restrict events, e.g. USD,EUR.  [empty = all]
-  IMPACTS                Comma list of impacts to include.          [High]   (High = red folder)
+  IMPACTS                Comma list of impacts to include.          [High]  (High = red folder)
   TRUMP_QUERY            Google News search query.                  [market-relevant default]
-  TRUMP_MAX              Max headlines to show.                     [8]
+  TRUMP_MAX              Max headlines to scan.                     [8]
+  TRUMP_SHOW             Max Trump headlines to show.               [3]
   TRUMP_LOOKBACK_HOURS   Only headlines newer than this many hrs.   [24]
+  GREETING               Opening line.                              [Morning all]
+  BRIEF_TITLE            Header title.                              [Forex Morning Briefing]
+  BRAND                  Name the closing quote is signed with.     [Inner Edge]
+  SIGNOFF                Closing line.                              [Trade smart]
+  WEBHOOK_USERNAME       Name the bot posts under.                  [= BRIEF_TITLE]
   POST_IF_EMPTY          "1" to still post when nothing is found.   [1]
-  EXPECTED_LOCAL_HOUR    If set, exit unless the local hour matches (DST guard for cron). [unset]
-  STATE_FILE             File that stores the last post's id (so it can be deleted). [last_message_id.txt]
+  EXPECTED_LOCAL_HOUR    If set, exit unless local hour matches (DST guard for cron). [unset]
+  STATE_FILE             Stores the ids of the posts to delete next run. [last_message_id.txt]
 """
 
 import os
@@ -47,10 +55,18 @@ TZ         = ZoneInfo(os.environ.get("TIMEZONE", "Europe/London"))
 IMPACTS    = {s.strip() for s in os.environ.get("IMPACTS", "High").split(",") if s.strip()}
 CURRENCIES = {s.strip().upper() for s in os.environ.get("CURRENCIES", "").split(",") if s.strip()}
 TRUMP_MAX  = int(os.environ.get("TRUMP_MAX", "8"))
+TRUMP_SHOW = int(os.environ.get("TRUMP_SHOW", "3"))
 LOOKBACK   = int(os.environ.get("TRUMP_LOOKBACK_HOURS", "24"))
 POST_IF_EMPTY = os.environ.get("POST_IF_EMPTY", "1") == "1"
 EXPECTED_HOUR = os.environ.get("EXPECTED_LOCAL_HOUR", "").strip()
-STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")  # remembers the post to delete next run
+STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")
+
+GREETING    = os.environ.get("GREETING", "Morning all \U0001F44B")
+BRIEF_TITLE = os.environ.get("BRIEF_TITLE", "Forex Morning Briefing")
+BRAND       = os.environ.get("BRAND", "Inner Edge")
+SIGNOFF     = os.environ.get("SIGNOFF", "Trade smart \U0001F4CA")
+WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", BRIEF_TITLE)
+RULE = "\u25AC" * 18
 
 DEFAULT_TRUMP_QUERY = (
     'Trump (tariff OR tariffs OR "Federal Reserve" OR Fed OR Powell OR '
@@ -59,11 +75,26 @@ DEFAULT_TRUMP_QUERY = (
 TRUMP_QUERY = os.environ.get("TRUMP_QUERY", DEFAULT_TRUMP_QUERY)
 
 UA = "Mozilla/5.0 (compatible; forex-news-bot/1.0)"
-IMPACT_EMOJI = {"High": "\U0001F534", "Medium": "\U0001F7E0",
-                "Low": "\U0001F7E1", "Holiday": "\u26AA", "Non-Economic": "\u26AA"}
+
+# FX pair naming convention: the base currency is whichever appears earlier here.
+PAIR_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "JPY"]
+
+# Short, common trading aphorisms (rotated daily). Signed with BRAND.
+QUOTES = [
+    "The trend is your friend - until it ends.",
+    "Plan the trade, and trade the plan.",
+    "Cut your losses short and let your winners run.",
+    "Risk comes from not knowing what you're doing.",
+    "Patience is a position.",
+    "The market can stay irrational longer than you can stay solvent.",
+    "Trade what you see, not what you think.",
+    "Discipline beats conviction.",
+    "When in doubt, stay out.",
+    "Protect your capital first; profits come second.",
+]
 
 
-# --------------------------------------------------------------------------- helpers
+# --------------------------------------------------------------------------- fetch
 def http_get(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -83,7 +114,7 @@ def get_economic_events():
         impact = (e.get("impact") or "").strip()
         if IMPACTS and impact not in IMPACTS:
             continue
-        cur = (e.get("country") or "").strip().upper()   # 'country' field holds the currency code
+        cur = (e.get("country") or "").strip().upper()   # 'country' holds the currency code
         if CURRENCIES and cur not in CURRENCIES:
             continue
         raw_date = e.get("date")
@@ -134,47 +165,181 @@ def get_trump_headlines():
     return items[:TRUMP_MAX]
 
 
-# --------------------------------------------------------------------------- formatting
-def format_events(events):
+# --------------------------------------------------------------------------- writing
+def describe(title):
+    """A plain-English 'what it is / why it matters' line for an event."""
+    t = title.lower()
+    if "core pce" in t or "pce" in t:
+        return "The Fed's preferred inflation gauge."
+    if "cpi" in t or "consumer price" in t or "inflation" in t:
+        return "Measures inflation - a key input for central-bank policy."
+    if "ppi" in t or "producer price" in t:
+        return "Wholesale price pressure that often feeds through into inflation."
+    if ("rate" in t and ("decision" in t or "statement" in t)) or "cash rate" in t \
+            or "bank rate" in t or "interest rate" in t:
+        return "The central bank's interest-rate decision - a major driver for the currency."
+    if "non-farm" in t or "nonfarm" in t or "nfp" in t or "payroll" in t:
+        return "Headline jobs data - one of the biggest market movers of the month."
+    if "employment change" in t or ("employment" in t and "rate" not in t):
+        return "Gauges hiring strength in the labour market."
+    if "unemployment rate" in t:
+        return "The share of the workforce without a job - a core health check on the economy."
+    if "jobless" in t or "claims" in t:
+        return "A weekly read on layoffs and labour-market softness."
+    if "gdp" in t:
+        return "The broadest measure of economic growth."
+    if "pmi" in t or "ism" in t:
+        return "A business survey that often previews where the economy is heading."
+    if "retail sales" in t:
+        return "Tracks consumer spending, the engine of most economies."
+    if "fomc" in t:
+        return "Fed meeting communication - watch for shifts in the policy outlook."
+    if "trade balance" in t:
+        return "The gap between exports and imports, which feeds into currency demand."
+    if "press conf" in t or "speaks" in t or "speech" in t or "testimony" in t:
+        return "Officials' commentary can move the currency on tone alone."
+    return "A high-impact release that can move the currency."
+
+
+def direction_note(title, cur):
+    t = title.lower()
+    tone_driven = any(k in t for k in (
+        "rate", "decision", "statement", "fomc", "press conf",
+        "speaks", "speech", "testimony"))
+    if tone_driven:
+        return f"Hawkish signals tend to support {cur}; dovish signals weigh on it."
+    return f"A stronger-than-expected print is typically {cur}-positive; a weaker one, {cur}-negative."
+
+
+def event_block(when, cur, title, forecast, prev):
+    bits = []
+    if forecast:
+        bits.append(f"forecast {forecast}")
+    if prev:
+        bits.append(f"prev {prev}")
+    figures = " (" + ", ".join(bits) + ")" if bits else ""
+    body = f"{describe(title)}{figures} {direction_note(title, cur)}"
+    return f"\U0001F534 **{when:%H:%M} UK \u00b7 {cur} {title}**\n{body}"
+
+
+def trump_line(heads):
+    flag = "\U0001F1FA\U0001F1F8"
+    if not heads:
+        return (f"{flag} **Trump Watch:** No significant Trump or "
+                f"tariff-related news in the last {LOOKBACK} hours.")
+    lines = [f"{flag} **Trump Watch:**"]
+    for when, title, _link in heads[:TRUMP_SHOW]:
+        lines.append(f"\u2022 {title}")   # source name is kept; links omitted for a clean look
+    return "\n".join(lines)
+
+
+def _pair_name(a, b):
+    """Order two currencies into a conventional pair name (base/quote)."""
+    ia = PAIR_ORDER.index(a) if a in PAIR_ORDER else 99
+    ib = PAIR_ORDER.index(b) if b in PAIR_ORDER else 99
+    base, quote = (a, b) if ia <= ib else (b, a)
+    return f"{base}/{quote}"
+
+
+def pairs_schedule(events):
+    """Every FX pair touched by red-folder news today, each with its event times."""
     if not events:
-        return "_No red-folder events scheduled today._"
-    lines = []
-    for when, cur, impact, title, forecast, prev in events:
-        emoji = IMPACT_EMOJI.get(impact, "\U0001F534")
-        extra = []
-        if forecast:
-            extra.append(f"F: {forecast}")
-        if prev:
-            extra.append(f"P: {prev}")
-        tail = f"  ({' | '.join(extra)})" if extra else ""
-        lines.append(f"`{when:%H:%M}` {emoji} **{cur}** \u2014 {title}{tail}")
-    return "\n".join(lines)
+        return None
+    news_ccys = {cur for _w, cur, *_ in events}
+    pairs = set()
+    for c in news_ccys:
+        if c in PAIR_ORDER:
+            for other in PAIR_ORDER:           # pair it against every other major
+                if other != c:
+                    pairs.add(_pair_name(c, other))
+        elif c != "USD":                       # exotic currency (e.g. CNY): pair vs USD
+            pairs.add(_pair_name(c, "USD"))
+
+    rows = []
+    for p in pairs:
+        sides = set(p.split("/"))
+        times = sorted(((w, cur) for w, cur, _i, _t, _f, _p in events if cur in sides),
+                       key=lambda x: x[0])
+        if times:
+            stamps = ", ".join(f"{w:%H:%M} ({cur})" for w, cur in times)
+            rows.append((len(times), p, stamps))
+    rows.sort(key=lambda r: (-r[0], r[1]))     # busiest pairs first, then alphabetical
+    body = "\n".join(f"**{p}** \u2014 {stamps}" for _n, p, stamps in rows)
+    return "\U0001F4C5 **Pairs in play (UK time):**\n" + body
 
 
-def format_headlines(items):
-    if not items:
-        return f"_No relevant Trump headlines in the last {LOOKBACK}h._"
-    lines = []
-    for when, title, link in items:
-        ts = f"`{when.astimezone(TZ):%H:%M}` " if when else ""
-        lines.append(f"{ts}\u2022 [{title}]({link})" if link else f"{ts}\u2022 {title}")
-    return "\n".join(lines)
+def pick_quote(now):
+    return QUOTES[now.timetuple().tm_yday % len(QUOTES)]
 
 
-def clamp(s, limit=4096):
-    return s if len(s) <= limit else s[:limit - 1] + "\u2026"
+def build_message(events, heads, now, ev_err="", hd_err=""):
+    events = sorted(events, key=lambda e: e[0])      # always render in time order
+    date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
+    parts = [GREETING, f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
+
+    if ev_err:
+        parts.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
+    elif not events:
+        parts.append("_No red-folder (high-impact) events scheduled today._")
+    else:
+        for when, cur, _impact, title, forecast, prev in events:
+            parts.append(event_block(when, cur, title, forecast, prev))
+
+    if hd_err:
+        parts.append(f"\U0001F1FA\U0001F1F8 **Trump Watch:** \u26A0\uFE0F {hd_err}")
+    else:
+        parts.append(trump_line(heads))
+
+    sched = pairs_schedule(events)
+    if sched:
+        parts.append(sched)
+    parts.append(f"_\"{pick_quote(now)}\"_\n\u2014 {BRAND}")
+    parts.append(SIGNOFF)
+    return "\n\n".join(parts)
 
 
+def chunk_message(text, limit=1900):
+    """Split into Discord-sized pieces on blank-line boundaries."""
+    chunks, cur = [], ""
+    for block in text.split("\n\n"):
+        add = ("\n\n" + block) if cur else block
+        if cur and len(cur) + len(add) > limit:
+            chunks.append(cur)
+            cur = block
+        else:
+            cur += add
+    if cur:
+        chunks.append(cur)
+    out = []
+    for c in chunks:                      # split anything still too long on line breaks
+        if len(c) <= limit:
+            out.append(c)
+            continue
+        line_cur = ""
+        for line in c.split("\n"):
+            add = ("\n" + line) if line_cur else line
+            if line_cur and len(line_cur) + len(add) > limit:
+                out.append(line_cur)
+                line_cur = line
+            else:
+                line_cur += add
+        if line_cur:
+            out.append(line_cur)
+    return out
+
+
+# --------------------------------------------------------------------------- discord
 def _webhook_parts():
     base, _, query = WEBHOOK.partition("?")
     return base.rstrip("/"), query
 
 
-def post(embeds):
-    """Post a new webhook message and return its message id (?wait=true gives us the id)."""
+def post(content):
+    """Post a plain message; return its message id (?wait=true gives us the id)."""
     base, query = _webhook_parts()
     url = base + "?wait=true" + (("&" + query) if query else "")
-    payload = {"username": "Morning Forex Brief", "embeds": embeds}
+    payload = {"username": WEBHOOK_USERNAME, "content": content,
+               "allowed_mentions": {"parse": []}}     # never ping @everyone/@here/roles
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "User-Agent": UA},
@@ -188,7 +353,6 @@ def post(embeds):
 
 
 def delete_message(message_id):
-    """Delete a message we posted earlier. Tolerates 'already gone' (404)."""
     if not message_id:
         return
     base, query = _webhook_parts()
@@ -198,22 +362,28 @@ def delete_message(message_id):
         with urllib.request.urlopen(req, timeout=30):
             pass
     except urllib.error.HTTPError as e:
-        if e.code != 404:        # 404 = manually deleted already; anything else is real
+        if e.code != 404:        # 404 = already gone; anything else is real
             raise
 
 
-def read_last_id():
+def read_ids():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip() or None
+            raw = f.read().strip()
     except FileNotFoundError:
-        return None
+        return []
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return [str(x) for x in data] if isinstance(data, list) else [str(data)]
+    except ValueError:
+        return [raw]            # backward-compat with old single-id files
 
 
-def write_last_id(message_id):
-    if message_id:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            f.write(str(message_id))
+def write_ids(ids):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(ids), f)
 
 
 # --------------------------------------------------------------------------- main
@@ -226,39 +396,31 @@ def main():
         print(f"Local hour {now.hour} != EXPECTED_LOCAL_HOUR {EXPECTED_HOUR}; skipping.")
         return
 
-    today_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
-
     try:
-        events = get_economic_events()
-        ev_text = format_events(events)
-    except Exception as e:               # network / rate-limit / parse issues
-        events, ev_text = [], f"\u26A0\uFE0F Could not load events: {e}"
-
-    try:
-        heads = get_trump_headlines()
-        hd_text = format_headlines(heads)
+        events, ev_err = get_economic_events(), ""
     except Exception as e:
-        heads, hd_text = [], f"\u26A0\uFE0F Could not load headlines: {e}"
+        events, ev_err = [], str(e)
+    try:
+        heads, hd_err = get_trump_headlines(), ""
+    except Exception as e:
+        heads, hd_err = [], str(e)
 
-    if not POST_IF_EMPTY and not events and not heads \
-            and "\u26A0\uFE0F" not in ev_text and "\u26A0\uFE0F" not in hd_text:
+    if not POST_IF_EMPTY and not events and not heads and not ev_err and not hd_err:
         print("Nothing to post and POST_IF_EMPTY=0; skipping.")
         return
 
-    embeds = [
-        {"title": f"\U0001F534 Red-Folder Economic Events \u2014 {today_str}",
-         "description": clamp(ev_text), "color": 0xE03131},
-        {"title": "\U0001F5DE\uFE0F Trump / Market Headlines",
-         "description": clamp(hd_text), "color": 0x1971C2},
-    ]
-    prev_id = read_last_id()
-    if prev_id:
-        delete_message(prev_id)          # remove the previous post before posting the new one
-        print(f"Deleted previous post {prev_id}.")
+    chunks = chunk_message(build_message(events, heads, now, ev_err, hd_err))
 
-    new_id = post(embeds)
-    write_last_id(new_id)
-    print(f"Posted brief: {len(events)} event(s), {len(heads)} headline(s). id={new_id}")
+    old = read_ids()
+    if old:
+        for mid in old:
+            delete_message(mid)
+        print(f"Deleted {len(old)} previous message(s).")
+
+    new_ids = [mid for mid in (post(c) for c in chunks) if mid]
+    write_ids(new_ids)
+    print(f"Posted brief in {len(chunks)} message(s): "
+          f"{len(events)} event(s), {len(heads)} headline(s).")
 
 
 if __name__ == "__main__":
