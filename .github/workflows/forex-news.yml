@@ -32,7 +32,9 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TIMEZONE: Europe/London
-          EXPECTED_LOCAL_HOUR: "5"
+          # Only enforce the 5am guard on the automatic schedule. Manual
+          # "Run workflow" tests leave it empty, so they always post.
+          EXPECTED_LOCAL_HOUR: ${{ github.event_name == 'schedule' && '5' || '' }}
           # Optional overrides:
           # CURRENCIES: "USD,EUR"
           # TRUMP_MAX: "8"
