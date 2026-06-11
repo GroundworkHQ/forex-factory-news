@@ -394,7 +394,7 @@ def pairs_schedule(events):
         return None
     rows.sort(key=lambda r: (-r[0], r[1]))        # busiest pairs first, then alphabetical
     body = "\n\n".join(f"**{p}**\n" + "\n".join(bl) for _n, p, bl in rows)
-    return (f"\U0001F3AF **Top pairs today:**\n"
+    return (f"\U0001F3AF **Top Pairs Today:**\n"
             f"_Both currencies in each pair have red-folder news today, so the pair gets "
             f"hit from both sides. Two catalysts on one chart tend to drive the biggest, "
             f"cleanest moves. This is where the day's volatility and opportunity "
@@ -414,7 +414,7 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
     rule = "\u25AC" * RULE_LENGTH                  # fixed length so it never wraps on mobile
 
-    sections = [f"## \U0001F4C8 {BRIEF_TITLE}\n{date_str}\n{rule}"]
+    sections = [f"### \U0001F4C8 {BRIEF_TITLE}\n{date_str}\n{rule}"]
 
     if ev_err:
         sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
