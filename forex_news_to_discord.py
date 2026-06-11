@@ -70,7 +70,7 @@ BRAND       = os.environ.get("BRAND", "Team Inner Edge")
 SIGNOFF     = os.environ.get("SIGNOFF", "")
 WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
 AVATAR_URL  = os.environ.get("AVATAR_URL", "").strip()      # optional logo override (public image URL)
-EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0xE03131"), 0)  # left-bar colour of the embed
+EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0x5865F2"), 0)  # left-bar colour of the embed
 PING_EVERYONE = os.environ.get("PING_EVERYONE", "1") == "1"  # let the greeting actually notify
 RULE = "\u25AC" * 18
 
@@ -292,7 +292,7 @@ def pairs_schedule(events):
             rows.append((len(stamp_list), p, ", ".join(stamp_list)))
     rows.sort(key=lambda r: (-r[0], r[1]))     # busiest pairs first, then alphabetical
     body = "\n".join(f"**{p}** \u2014 {stamps}" for _n, p, stamps in rows)
-    return (f"\U0001F4C5 **Pairs in play ({TZ_LABEL} / {SECOND_LABEL}):**\n" + body)
+    return (f"\U0001F4C5 **Pairs in play ({TZ_LABEL} / {SECOND_LABEL}):**\n\n" + body)
 
 
 def pick_quote(now):
