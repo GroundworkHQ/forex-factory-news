@@ -63,10 +63,15 @@ STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")
 
 GREETING    = os.environ.get("GREETING", "Morning all \U0001F44B")
 BRIEF_TITLE = os.environ.get("BRIEF_TITLE", "Forex Morning Briefing")
-BRAND       = os.environ.get("BRAND", "Inner Edge")
-SIGNOFF     = os.environ.get("SIGNOFF", "Trade smart \U0001F4CA")
+BRAND       = os.environ.get("BRAND", "Team Inner Edge")
+SIGNOFF     = os.environ.get("SIGNOFF", "")
 WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", BRIEF_TITLE)
 RULE = "\u25AC" * 18
+
+# Times are shown in the primary tz (TIMEZONE) and a second tz side by side.
+TZ_LABEL    = os.environ.get("TZ_LABEL", "UK")
+SECOND_TZ   = ZoneInfo(os.environ.get("SECOND_TZ", "America/New_York"))
+SECOND_LABEL = os.environ.get("SECOND_TZ_LABEL", "EST")
 
 DEFAULT_TRUMP_QUERY = (
     'Trump (tariff OR tariffs OR "Federal Reserve" OR Fed OR Powell OR '
@@ -211,6 +216,17 @@ def direction_note(title, cur):
     return f"A stronger-than-expected print is typically {cur}-positive; a weaker one, {cur}-negative."
 
 
+def stamp(when):
+    """Full dual-tz stamp, e.g. '13:15 UK / 08:15 ET'."""
+    return (f"{when.astimezone(TZ):%H:%M} {TZ_LABEL} / "
+            f"{when.astimezone(SECOND_TZ):%H:%M} {SECOND_LABEL}")
+
+
+def stamp_compact(when):
+    """Compact dual-tz stamp for dense lists, e.g. '13:15/08:15'."""
+    return f"{when.astimezone(TZ):%H:%M}/{when.astimezone(SECOND_TZ):%H:%M}"
+
+
 def event_block(when, cur, title, forecast, prev):
     bits = []
     if forecast:
@@ -219,7 +235,7 @@ def event_block(when, cur, title, forecast, prev):
         bits.append(f"prev {prev}")
     figures = " (" + ", ".join(bits) + ")" if bits else ""
     body = f"{describe(title)}{figures} {direction_note(title, cur)}"
-    return f"\U0001F534 **{when:%H:%M} UK \u00b7 {cur} {title}**\n{body}"
+    return f"\U0001F534 **{stamp(when)} \u00b7 {cur} {title}**\n{body}"
 
 
 def trump_line(heads):
@@ -260,12 +276,17 @@ def pairs_schedule(events):
         sides = set(p.split("/"))
         times = sorted(((w, cur) for w, cur, _i, _t, _f, _p in events if cur in sides),
                        key=lambda x: x[0])
-        if times:
-            stamps = ", ".join(f"{w:%H:%M} ({cur})" for w, cur in times)
-            rows.append((len(times), p, stamps))
+        seen_stamps, stamp_list = set(), []
+        for w, cur in times:
+            s = f"{stamp_compact(w)} ({cur})"
+            if s not in seen_stamps:          # collapse two events at the same minute
+                seen_stamps.add(s)
+                stamp_list.append(s)
+        if stamp_list:
+            rows.append((len(stamp_list), p, ", ".join(stamp_list)))
     rows.sort(key=lambda r: (-r[0], r[1]))     # busiest pairs first, then alphabetical
     body = "\n".join(f"**{p}** \u2014 {stamps}" for _n, p, stamps in rows)
-    return "\U0001F4C5 **Pairs in play (UK time):**\n" + body
+    return (f"\U0001F4C5 **Pairs in play ({TZ_LABEL} / {SECOND_LABEL}):**\n" + body)
 
 
 def pick_quote(now):
@@ -275,27 +296,29 @@ def pick_quote(now):
 def build_message(events, heads, now, ev_err="", hd_err=""):
     events = sorted(events, key=lambda e: e[0])      # always render in time order
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
-    parts = [GREETING, f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
+
+    sections = [GREETING, f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
 
     if ev_err:
-        parts.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
+        sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
     elif not events:
-        parts.append("_No red-folder (high-impact) events scheduled today._")
+        sections.append("_No red-folder (high-impact) events scheduled today._")
     else:
-        for when, cur, _impact, title, forecast, prev in events:
-            parts.append(event_block(when, cur, title, forecast, prev))
+        sections.append("\n".join(                   # events kept tight, no gaps between them
+            event_block(when, cur, title, forecast, prev)
+            for when, cur, _impact, title, forecast, prev in events))
 
-    if hd_err:
-        parts.append(f"\U0001F1FA\U0001F1F8 **Trump Watch:** \u26A0\uFE0F {hd_err}")
-    else:
-        parts.append(trump_line(heads))
+    sections.append(f"\U0001F1FA\U0001F1F8 **Trump Watch:** \u26A0\uFE0F {hd_err}"
+                    if hd_err else trump_line(heads))
 
     sched = pairs_schedule(events)
     if sched:
-        parts.append(sched)
-    parts.append(f"_\"{pick_quote(now)}\"_\n\u2014 {BRAND}")
-    parts.append(SIGNOFF)
-    return "\n\n".join(parts)
+        sections.append(sched)
+
+    sections.append(f"_\"{pick_quote(now)}\"_\n\n\u2014 {BRAND}")
+    if SIGNOFF:
+        sections.append(SIGNOFF)
+    return "\n\n".join(sections)                      # one blank line between sections only
 
 
 def chunk_message(text, limit=1900):
