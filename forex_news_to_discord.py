@@ -21,11 +21,14 @@ Optional environment variables (defaults in brackets):
   TRUMP_MAX              Max headlines to scan.                     [8]
   TRUMP_SHOW             Max Trump headlines to show.               [3]
   TRUMP_LOOKBACK_HOURS   Only headlines newer than this many hrs.   [24]
-  GREETING               Opening line.                              [Morning all]
+  GREETING               Opening line, posted as text so it can ping.  [Morning @everyone]
   BRIEF_TITLE            Header title.                              [Forex Morning Briefing]
-  BRAND                  Name the closing quote is signed with.     [Inner Edge]
-  SIGNOFF                Closing line.                              [Trade smart]
-  WEBHOOK_USERNAME       Name the bot posts under.                  [= BRIEF_TITLE]
+  BRAND                  Name the closing quote is signed with.     [Team Inner Edge]
+  SIGNOFF                Optional closing line.                     [none]
+  WEBHOOK_USERNAME       Name the bot posts under.                  [TEAM INNER EDGE]
+  AVATAR_URL             Public image URL to use as the bot logo.   [none = use webhook's avatar]
+  EMBED_COLOR            Hex colour of the embed's left bar.        [0xE03131]
+  PING_EVERYONE          "1" to let the greeting notify @everyone.  [1]
   POST_IF_EMPTY          "1" to still post when nothing is found.   [1]
   EXPECTED_LOCAL_HOUR    If set, exit unless local hour matches (DST guard for cron). [unset]
   STATE_FILE             Stores the ids of the posts to delete next run. [last_message_id.txt]
@@ -61,11 +64,14 @@ POST_IF_EMPTY = os.environ.get("POST_IF_EMPTY", "1") == "1"
 EXPECTED_HOUR = os.environ.get("EXPECTED_LOCAL_HOUR", "").strip()
 STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")
 
-GREETING    = os.environ.get("GREETING", "Morning all \U0001F44B")
+GREETING    = os.environ.get("GREETING", "Morning @everyone \U0001F44B")
 BRIEF_TITLE = os.environ.get("BRIEF_TITLE", "Forex Morning Briefing")
 BRAND       = os.environ.get("BRAND", "Team Inner Edge")
 SIGNOFF     = os.environ.get("SIGNOFF", "")
-WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", BRIEF_TITLE)
+WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
+AVATAR_URL  = os.environ.get("AVATAR_URL", "").strip()      # optional logo override (public image URL)
+EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0xE03131"), 0)  # left-bar colour of the embed
+PING_EVERYONE = os.environ.get("PING_EVERYONE", "1") == "1"  # let the greeting actually notify
 RULE = "\u25AC" * 18
 
 # Times are shown in the primary tz (TIMEZONE) and a second tz side by side.
@@ -294,17 +300,18 @@ def pick_quote(now):
 
 
 def build_message(events, heads, now, ev_err="", hd_err=""):
+    """Build the embed body (everything except the @everyone greeting line)."""
     events = sorted(events, key=lambda e: e[0])      # always render in time order
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
 
-    sections = [GREETING, f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
+    sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
 
     if ev_err:
         sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
     elif not events:
         sections.append("_No red-folder (high-impact) events scheduled today._")
     else:
-        sections.append("\n".join(                   # events kept tight, no gaps between them
+        sections.append("\n\n".join(                 # a blank line between each event
             event_block(when, cur, title, forecast, prev)
             for when, cur, _impact, title, forecast, prev in events))
 
@@ -318,7 +325,7 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     sections.append(f"_\"{pick_quote(now)}\"_\n\n\u2014 {BRAND}")
     if SIGNOFF:
         sections.append(SIGNOFF)
-    return "\n\n".join(sections)                      # one blank line between sections only
+    return "\n\n".join(sections)                      # one blank line between sections
 
 
 def chunk_message(text, limit=1900):
@@ -357,12 +364,20 @@ def _webhook_parts():
     return base.rstrip("/"), query
 
 
-def post(content):
-    """Post a plain message; return its message id (?wait=true gives us the id)."""
+def post(content, embed_bodies):
+    """Post one message: greeting `content` (pings) plus the brief as embed(s). Returns id."""
     base, query = _webhook_parts()
     url = base + "?wait=true" + (("&" + query) if query else "")
-    payload = {"username": WEBHOOK_USERNAME, "content": content,
-               "allowed_mentions": {"parse": []}}     # never ping @everyone/@here/roles
+    embeds = [{"description": b, "color": EMBED_COLOR} for b in embed_bodies[:10]]
+    payload = {
+        "username": WEBHOOK_USERNAME,
+        "content": content,
+        "embeds": embeds,
+        # Only @everyone/@here may notify; never ping users or roles from any text.
+        "allowed_mentions": {"parse": (["everyone"] if PING_EVERYONE else [])},
+    }
+    if AVATAR_URL:
+        payload["avatar_url"] = AVATAR_URL
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "User-Agent": UA},
@@ -432,7 +447,8 @@ def main():
         print("Nothing to post and POST_IF_EMPTY=0; skipping.")
         return
 
-    chunks = chunk_message(build_message(events, heads, now, ev_err, hd_err))
+    body = build_message(events, heads, now, ev_err, hd_err)
+    embed_bodies = chunk_message(body, 4096)          # embeds allow up to 4096 chars each
 
     old = read_ids()
     if old:
@@ -440,9 +456,9 @@ def main():
             delete_message(mid)
         print(f"Deleted {len(old)} previous message(s).")
 
-    new_ids = [mid for mid in (post(c) for c in chunks) if mid]
-    write_ids(new_ids)
-    print(f"Posted brief in {len(chunks)} message(s): "
+    new_id = post(GREETING, embed_bodies)
+    write_ids([new_id] if new_id else [])
+    print(f"Posted brief (1 message, {len(embed_bodies)} embed(s)): "
           f"{len(events)} event(s), {len(heads)} headline(s).")
 
 
