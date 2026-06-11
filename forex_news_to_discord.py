@@ -414,7 +414,7 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
     rule = "\u25AC" * RULE_LENGTH                  # fixed length so it never wraps on mobile
 
-    sections = [f"## {BRIEF_TITLE}\n{date_str}\n{rule}"]
+    sections = [f"## \U0001F4C8 {BRIEF_TITLE}\n{date_str}\n{rule}"]
 
     if ev_err:
         sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
