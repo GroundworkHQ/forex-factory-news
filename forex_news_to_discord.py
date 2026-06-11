@@ -76,7 +76,7 @@ WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
 AVATAR_URL  = os.environ.get("AVATAR_URL", "").strip()      # optional logo override (public image URL)
 EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0x5865F2"), 0)  # left-bar colour of the embed
 PING_EVERYONE = os.environ.get("PING_EVERYONE", "1") == "1"  # let the greeting actually notify
-RULE_LENGTH = int(os.environ.get("RULE_LENGTH", "26"))      # divider bars; fits one mobile line
+RULE_LENGTH = int(os.environ.get("RULE_LENGTH", "20"))      # divider bars; fits one mobile line
 
 # Times are shown in the primary tz (TIMEZONE) and a second tz side by side.
 TZ_LABEL    = os.environ.get("TZ_LABEL", "UK")
@@ -414,7 +414,7 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
     rule = "\u25AC" * RULE_LENGTH                  # fixed length so it never wraps on mobile
 
-    sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{rule}"]
+    sections = [f"## \U0001F4F0 {BRIEF_TITLE} | {date_str}\n{rule}"]
 
     if ev_err:
         sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
