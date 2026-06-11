@@ -69,7 +69,7 @@ FORCE_POST   = os.environ.get("FORCE_POST", "0") == "1"      # ignore the time/d
 STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")
 
 GREETING    = os.environ.get("GREETING", "Morning @everyone \U0001F44B")
-BRIEF_TITLE = os.environ.get("BRIEF_TITLE", "Forex Morning Briefing")
+BRIEF_TITLE = os.environ.get("BRIEF_TITLE", "Forex Morning Brief")
 BRAND       = os.environ.get("BRAND", "Team Inner Edge")
 SIGNOFF     = os.environ.get("SIGNOFF", "")
 WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
