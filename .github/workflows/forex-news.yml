@@ -1,51 +1,48 @@
 name: Morning Forex Brief
 
-# GitHub cron runs in UTC and has no timezone support, so we schedule BOTH
-# 04:00 and 05:00 UTC. The EXPECTED_LOCAL_HOUR=5 guard in the script makes only
-# the run that actually lands at 5am UK time post; the other one exits quietly.
-#   04:00 UTC = 5am BST (summer)   |   05:00 UTC = 5am GMT (winter)
+# Aim: post once each morning at ~4:11am UK time.
+# GitHub cron is UTC and can't do timezones, so we fire a few times across the
+# early-morning window (off the top of the hour, which is less congested and
+# tends to be delayed less). The script's own gate posts ONCE per day, only at
+# or after 4am UK -- so whichever run GitHub executes first (on time or late)
+# posts, and the rest skip. No double posts, and it self-heals if GitHub delays
+# or drops a run.
+#   03:11 UTC = 4:11am BST (summer)   |   04:11 UTC = 4:11am GMT (winter)
+#   05:11 UTC = backup if the earlier run is delayed/dropped
 on:
   schedule:
-    - cron: "0 4 * * *"
-    - cron: "0 5 * * *"
-  workflow_dispatch: {}        # lets you trigger a manual test run from the Actions tab
-
-permissions:
-  contents: write              # lets the job save the last message id back to the repo
+    - cron: "11 3 * * *"
+    - cron: "11 4 * * *"
+    - cron: "11 5 * * *"
+  workflow_dispatch: {}        # manual test run; posts immediately (FORCE_POST below)
 
 jobs:
   post:
     runs-on: ubuntu-latest
-    concurrency: forex-brief    # never let two runs race on the saved id
+    concurrency: forex-brief    # never let two runs race on the saved state
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      # Carry the saved state (last message id + last posted date) between runs.
+      - name: Remember state
+        uses: actions/cache@v5
+        with:
+          path: last_message_id.txt
+          key: forex-state-${{ github.run_id }}
+          restore-keys: |
+            forex-state-
+
       - name: Post the brief
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           TIMEZONE: Europe/London
-          # Only enforce the 5am guard on the automatic schedule. Manual
-          # "Run workflow" tests leave it empty, so they always post.
-          EXPECTED_LOCAL_HOUR: ${{ github.event_name == 'schedule' && '5' || '' }}
+          POST_HOUR: "4"        # 4am UK
+          # Manual "Run workflow" tests post immediately; scheduled runs obey the gate.
+          FORCE_POST: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
           # Optional overrides:
           # CURRENCIES: "USD,EUR"
           # TRUMP_MAX: "8"
         run: python forex_news_to_discord.py
-
-      # Save the id of the message we just posted back into the repo, so the
-      # next run knows which message to delete. This persists reliably across
-      # runs (unlike a cache) -- the id is just committed to last_message_id.txt.
-      - name: Save last message id
-        run: |
-          if [ -n "$(git status --porcelain last_message_id.txt)" ]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add last_message_id.txt
-            git commit -m "Update last posted message id [skip ci]"
-            git push
-          else
-            echo "No change to last_message_id.txt; nothing to save."
-          fi
