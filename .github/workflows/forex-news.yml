@@ -10,24 +10,19 @@ on:
     - cron: "0 5 * * *"
   workflow_dispatch: {}        # lets you trigger a manual test run from the Actions tab
 
+permissions:
+  contents: write              # lets the job save the last message id back to the repo
+
 jobs:
   post:
     runs-on: ubuntu-latest
+    concurrency: forex-brief    # never let two runs race on the saved id
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      # Persist the previous post's id between runs so it can be deleted.
-      # The run-id key never hits on restore, so restore-keys pulls the most
-      # recent prior cache, and a fresh cache is always saved at job end.
-      - name: Restore last message id
-        uses: actions/cache@v5
-        with:
-          path: last_message_id.txt
-          key: forex-last-msg-${{ github.run_id }}
-          restore-keys: |
-            forex-last-msg-
+
       - name: Post the brief
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -39,3 +34,18 @@ jobs:
           # CURRENCIES: "USD,EUR"
           # TRUMP_MAX: "8"
         run: python forex_news_to_discord.py
+
+      # Save the id of the message we just posted back into the repo, so the
+      # next run knows which message to delete. This persists reliably across
+      # runs (unlike a cache) -- the id is just committed to last_message_id.txt.
+      - name: Save last message id
+        run: |
+          if [ -n "$(git status --porcelain last_message_id.txt)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add last_message_id.txt
+            git commit -m "Update last posted message id [skip ci]"
+            git push
+          else
+            echo "No change to last_message_id.txt; nothing to save."
+          fi
