@@ -340,7 +340,7 @@ def event_block(when, cur, title, forecast, prev):
         bits.append(f"prev {prev}")
     figures = " (" + ", ".join(bits) + ")" if bits else ""
     body = f"{describe(title)}{figures} {direction_note(title, cur)}"
-    return f"\U0001F534 **{stamp(when)} \u00b7 {cur} {title}**\n{body}"
+    return f"\U0001F534 **{cur} \u00b7 {title} \u00b7 {stamp(when)}**\n{body}"
 
 
 def trump_line(heads):
@@ -382,19 +382,19 @@ def pairs_schedule(events):
         sides = set(p.split("/"))
         times = sorted(((w, cur) for w, cur, _i, _t, _f, _p in events if cur in sides),
                        key=lambda x: x[0])
-        seen_stamps, stamp_list = set(), []
+        seen, bullets = set(), []
         for w, cur in times:
-            s = f"{stamp_compact(w)} ({cur})"
-            if s not in seen_stamps:              # collapse two events at the same minute
-                seen_stamps.add(s)
-                stamp_list.append(s)
-        if stamp_list:
-            rows.append((len(stamp_list), p, ", ".join(stamp_list)))
+            line = f"\u2022 {cur} \u00b7 {stamp(w)}"
+            if line not in seen:                  # collapse two events at the same minute
+                seen.add(line)
+                bullets.append(line)
+        if bullets:
+            rows.append((len(bullets), p, bullets))
     if not rows:
         return None
     rows.sort(key=lambda r: (-r[0], r[1]))        # busiest pairs first, then alphabetical
-    body = "\n".join(f"**{p}**: {stamps}" for _n, p, stamps in rows)
-    return (f"\U0001F3AF **Top pairs today ({TZ_LABEL} / {SECOND_LABEL}):**\n"
+    body = "\n\n".join(f"**{p}**\n" + "\n".join(bl) for _n, p, bl in rows)
+    return (f"\U0001F3AF **Top pairs today:**\n"
             f"_Both currencies in each pair have red-folder news today, so the pair gets "
             f"hit from both sides. Two catalysts on one chart tend to drive the biggest, "
             f"cleanest moves. This is where the day's volatility and opportunity "
