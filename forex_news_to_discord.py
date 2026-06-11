@@ -72,7 +72,6 @@ WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
 AVATAR_URL  = os.environ.get("AVATAR_URL", "").strip()      # optional logo override (public image URL)
 EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0x5865F2"), 0)  # left-bar colour of the embed
 PING_EVERYONE = os.environ.get("PING_EVERYONE", "1") == "1"  # let the greeting actually notify
-RULE = "\u25AC" * 18
 
 # Times are shown in the primary tz (TIMEZONE) and a second tz side by side.
 TZ_LABEL    = os.environ.get("TZ_LABEL", "UK")
@@ -303,8 +302,10 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     """Build the embed body (everything except the @everyone greeting line)."""
     events = sorted(events, key=lambda e: e[0])      # always render in time order
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
+    header = f"{BRIEF_TITLE} | {date_str}"
+    rule = "\u25AC" * max(12, round((len(header) + 2) / 1.3))   # spans the whole header line
 
-    sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{RULE}"]
+    sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{rule}"]
 
     if ev_err:
         sections.append(f"\u26A0\uFE0F Could not load events: {ev_err}")
