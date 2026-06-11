@@ -303,7 +303,7 @@ def build_message(events, heads, now, ev_err="", hd_err=""):
     events = sorted(events, key=lambda e: e[0])      # always render in time order
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
     header = f"{BRIEF_TITLE} | {date_str}"
-    rule = "\u25AC" * max(12, round((len(header) + 2) / 1.3))   # spans the whole header line
+    rule = "\u25AC" * max(12, round((len(header) + 2) / 1.78))   # spans the header line
 
     sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{rule}"]
 
