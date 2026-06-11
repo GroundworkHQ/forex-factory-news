@@ -395,7 +395,7 @@ def pairs_schedule(events):
     rows.sort(key=lambda r: (-r[0], r[1]))        # busiest pairs first, then alphabetical
     body = "\n\n".join(f"**{p}**\n" + "\n".join(bl) for _n, p, bl in rows)
     return (f"\U0001F3AF **Top Pairs Today:**\n"
-            f"_Both currencies in each pair have red-folder news today, so the pair gets "
+            f"_Each pair below has red-folder news on both currencies, so it gets "
             f"hit from both sides. Two catalysts on one chart tend to drive the biggest, "
             f"cleanest moves. This is where the day's volatility and opportunity "
             f"are concentrated._\n\n" + body)
