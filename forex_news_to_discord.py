@@ -30,8 +30,10 @@ Optional environment variables (defaults in brackets):
   EMBED_COLOR            Hex colour of the embed's left bar.        [0xE03131]
   PING_EVERYONE          "1" to let the greeting notify @everyone.  [1]
   POST_IF_EMPTY          "1" to still post when nothing is found.   [1]
-  EXPECTED_LOCAL_HOUR    If set, exit unless local hour matches (DST guard for cron). [unset]
-  STATE_FILE             Stores the ids of the posts to delete next run. [last_message_id.txt]
+  POST_HOUR              Post only at/after this local hour.        [5]
+  ONCE_PER_DAY           "1" to never post twice in one local day.  [1]
+  FORCE_POST             "1" to ignore the time/day gate (manual).  [0]
+  STATE_FILE             Stores the ids + last posted date.         [last_message_id.txt]
 """
 
 import os
@@ -61,7 +63,9 @@ TRUMP_MAX  = int(os.environ.get("TRUMP_MAX", "8"))
 TRUMP_SHOW = int(os.environ.get("TRUMP_SHOW", "3"))
 LOOKBACK   = int(os.environ.get("TRUMP_LOOKBACK_HOURS", "24"))
 POST_IF_EMPTY = os.environ.get("POST_IF_EMPTY", "1") == "1"
-EXPECTED_HOUR = os.environ.get("EXPECTED_LOCAL_HOUR", "").strip()
+POST_HOUR    = int(os.environ.get("POST_HOUR", "4"))         # post at/after this local hour
+ONCE_PER_DAY = os.environ.get("ONCE_PER_DAY", "1") == "1"    # never post twice in one local day
+FORCE_POST   = os.environ.get("FORCE_POST", "0") == "1"      # ignore the time/day gate (manual tests)
 STATE_FILE = os.environ.get("STATE_FILE", "last_message_id.txt")
 
 GREETING    = os.environ.get("GREETING", "Morning @everyone \U0001F44B")
@@ -72,6 +76,7 @@ WEBHOOK_USERNAME = os.environ.get("WEBHOOK_USERNAME", "TEAM INNER EDGE")
 AVATAR_URL  = os.environ.get("AVATAR_URL", "").strip()      # optional logo override (public image URL)
 EMBED_COLOR = int(os.environ.get("EMBED_COLOR", "0x5865F2"), 0)  # left-bar colour of the embed
 PING_EVERYONE = os.environ.get("PING_EVERYONE", "1") == "1"  # let the greeting actually notify
+RULE_LENGTH = int(os.environ.get("RULE_LENGTH", "26"))      # divider bars; fits one mobile line
 
 # Times are shown in the primary tz (TIMEZONE) and a second tz side by side.
 TZ_LABEL    = os.environ.get("TZ_LABEL", "UK")
@@ -89,18 +94,109 @@ UA = "Mozilla/5.0 (compatible; forex-news-bot/1.0)"
 # FX pair naming convention: the base currency is whichever appears earlier here.
 PAIR_ORDER = ["EUR", "GBP", "AUD", "NZD", "USD", "CAD", "CHF", "JPY"]
 
-# Short, common trading aphorisms (rotated daily). Signed with BRAND.
+# Trading aphorisms rotated daily (100 -> no repeat within any ~3-month window).
+# Signed with BRAND. Original/generic sayings, no attribution, no AI punctuation.
 QUOTES = [
-    "The trend is your friend - until it ends.",
-    "Plan the trade, and trade the plan.",
     "Cut your losses short and let your winners run.",
-    "Risk comes from not knowing what you're doing.",
+    "The trend is your friend until it ends.",
+    "Plan the trade, then trade the plan.",
     "Patience is a position.",
-    "The market can stay irrational longer than you can stay solvent.",
+    "When in doubt, stay out.",
     "Trade what you see, not what you think.",
     "Discipline beats conviction.",
-    "When in doubt, stay out.",
-    "Protect your capital first; profits come second.",
+    "The first loss is the cheapest loss.",
+    "Survival comes first, profit comes second.",
+    "Risk a little to make a lot, never the reverse.",
+    "A small loss today protects tomorrow's account.",
+    "Never add to a losing position.",
+    "Manage the risk and the profits manage themselves.",
+    "Your stop is a promise you keep.",
+    "Preparation beats prediction.",
+    "Process over outcome, every single day.",
+    "Consistency compounds.",
+    "The market rewards patience and punishes greed.",
+    "No single trade should ever matter that much.",
+    "Boredom is part of the edge.",
+    "Sit on your hands until the setup is clear.",
+    "The best trade is often no trade.",
+    "Let the market come to you.",
+    "Trade less, focus more.",
+    "A clear mind is your sharpest tool.",
+    "Emotion is the enemy of execution.",
+    "Fear and greed are expensive advisors.",
+    "Respect the level, not your opinion.",
+    "The chart does not care how you feel.",
+    "Hope is not a strategy.",
+    "Revenge trading empties accounts.",
+    "One good setup beats ten forced ones.",
+    "Quality of trades over quantity of trades.",
+    "Win the process and the results follow.",
+    "Small edges, repeated, build fortunes.",
+    "Protect your capital first, and profits will follow.",
+    "Capital preserved is opportunity kept.",
+    "Cash is a position too.",
+    "Missing a trade costs nothing. Chasing one costs plenty.",
+    "There is always another setup tomorrow.",
+    "The market will be open again next week.",
+    "Slow money is real money.",
+    "Get rich slow, not broke fast.",
+    "Compounding rewards those who stay in the game.",
+    "Stay solvent long enough to be right.",
+    "The market can test patience longer than you expect.",
+    "Trade the plan, not the news.",
+    "React to price, not to opinions.",
+    "Headlines move fast, trends move slow.",
+    "Volatility is opportunity for the prepared.",
+    "Plan your entry, your exit, and your risk.",
+    "Know your exit before your entry.",
+    "An exit plan turns chaos into a checklist.",
+    "Define your risk before the trade, not after.",
+    "Position size is risk control in disguise.",
+    "Leverage cuts both ways.",
+    "Overleverage is the fastest road to zero.",
+    "Trade small, think big, last long.",
+    "The goal is to be around for the next trade.",
+    "Protect the downside and the upside takes care of itself.",
+    "Confidence comes from preparation, not hope.",
+    "Backtest the idea before you risk the account.",
+    "Journal every trade, learn from every loss.",
+    "Your worst trades teach your best lessons.",
+    "Mistakes are tuition, so pay attention.",
+    "Review the process, not just the profit.",
+    "Edge without discipline is luck waiting to end.",
+    "Luck is not a system.",
+    "The market humbles the overconfident.",
+    "Stay humble or the market will humble you.",
+    "Certainty is a warning sign.",
+    "The setup you force is the trade you regret.",
+    "Wait for the trade to make sense.",
+    "If you have to squint, it is not a setup.",
+    "Clarity over cleverness.",
+    "Simple plans survive volatile days.",
+    "Complexity hides risk.",
+    "Master one setup before chasing ten.",
+    "Depth beats breadth in a trading edge.",
+    "Repetition turns a strategy into instinct.",
+    "Show up, follow the plan, repeat.",
+    "Boring and profitable beats exciting and broke.",
+    "The market pays you to wait.",
+    "Time in the right trade beats timing every trade.",
+    "Trade the session you prepared for.",
+    "Respect the news, but trade the chart.",
+    "Let red folders sharpen your focus, not your fear.",
+    "Volatility days reward plans and punish guesses.",
+    "Be early or be patient, never be late.",
+    "Chasing price is paying retail for risk.",
+    "The trade is not the trader. Stay detached.",
+    "You are managing risk, not predicting the future.",
+    "Probabilities, not certainties, pay the bills.",
+    "Think in bets, not in absolutes.",
+    "One trade is noise. A hundred trades are your edge.",
+    "Trust the sample size, not the single result.",
+    "Green days come from good habits, not good luck.",
+    "Risk management is the strategy. Everything else is decoration.",
+    "End the day flat in mind, if not in position.",
+    "Trade well today, and let the account grow itself.",
 ]
 
 
@@ -182,18 +278,18 @@ def describe(title):
     if "core pce" in t or "pce" in t:
         return "The Fed's preferred inflation gauge."
     if "cpi" in t or "consumer price" in t or "inflation" in t:
-        return "Measures inflation - a key input for central-bank policy."
+        return "Measures inflation, a key input for central bank policy."
     if "ppi" in t or "producer price" in t:
         return "Wholesale price pressure that often feeds through into inflation."
     if ("rate" in t and ("decision" in t or "statement" in t)) or "cash rate" in t \
             or "bank rate" in t or "interest rate" in t:
-        return "The central bank's interest-rate decision - a major driver for the currency."
+        return "The central bank's interest rate decision, a major driver for the currency."
     if "non-farm" in t or "nonfarm" in t or "nfp" in t or "payroll" in t:
-        return "Headline jobs data - one of the biggest market movers of the month."
+        return "Headline jobs data, one of the biggest market movers of the month."
     if "employment change" in t or ("employment" in t and "rate" not in t):
         return "Gauges hiring strength in the labour market."
     if "unemployment rate" in t:
-        return "The share of the workforce without a job - a core health check on the economy."
+        return "The share of the workforce without a job, a core health check on the economy."
     if "jobless" in t or "claims" in t:
         return "A weekly read on layoffs and labour-market softness."
     if "gdp" in t:
@@ -203,7 +299,7 @@ def describe(title):
     if "retail sales" in t:
         return "Tracks consumer spending, the engine of most economies."
     if "fomc" in t:
-        return "Fed meeting communication - watch for shifts in the policy outlook."
+        return "Fed meeting communication that can shift the policy outlook."
     if "trade balance" in t:
         return "The gap between exports and imports, which feeds into currency demand."
     if "press conf" in t or "speaks" in t or "speech" in t or "testimony" in t:
@@ -217,19 +313,23 @@ def direction_note(title, cur):
         "rate", "decision", "statement", "fomc", "press conf",
         "speaks", "speech", "testimony"))
     if tone_driven:
-        return f"Hawkish signals tend to support {cur}; dovish signals weigh on it."
-    return f"A stronger-than-expected print is typically {cur}-positive; a weaker one, {cur}-negative."
+        return f"Hawkish signals tend to support {cur}, while dovish signals weigh on it."
+    return f"A stronger-than-expected print usually lifts {cur}, and a weaker one weighs on it."
+
+
+def _t12(when, tz):
+    """12-hour am/pm time with no leading zero, e.g. '1:15pm'."""
+    return when.astimezone(tz).strftime("%I:%M%p").lower().lstrip("0")
 
 
 def stamp(when):
-    """Full dual-tz stamp, e.g. '13:15 UK / 08:15 ET'."""
-    return (f"{when.astimezone(TZ):%H:%M} {TZ_LABEL} / "
-            f"{when.astimezone(SECOND_TZ):%H:%M} {SECOND_LABEL}")
+    """Full dual-tz stamp, e.g. '1:15pm UK / 8:15am EST'."""
+    return f"{_t12(when, TZ)} {TZ_LABEL} / {_t12(when, SECOND_TZ)} {SECOND_LABEL}"
 
 
 def stamp_compact(when):
-    """Compact dual-tz stamp for dense lists, e.g. '13:15/08:15'."""
-    return f"{when.astimezone(TZ):%H:%M}/{when.astimezone(SECOND_TZ):%H:%M}"
+    """Compact dual-tz stamp for dense lists, e.g. '1:15pm/8:15am'."""
+    return f"{_t12(when, TZ)}/{_t12(when, SECOND_TZ)}"
 
 
 def event_block(when, cur, title, forecast, prev):
@@ -248,7 +348,7 @@ def trump_line(heads):
     if not heads:
         return (f"{flag} **Trump Watch:** No significant Trump or "
                 f"tariff-related news in the last {LOOKBACK} hours.")
-    lines = [f"{flag} **Trump Watch:**"]
+    lines = [f"{flag} **Trump Watch:**", ""]   # blank line before the first bullet
     for when, title, _link in heads[:TRUMP_SHOW]:
         lines.append(f"\u2022 {title}")   # source name is kept; links omitted for a clean look
     return "\n".join(lines)
@@ -263,18 +363,19 @@ def _pair_name(a, b):
 
 
 def pairs_schedule(events):
-    """Every FX pair touched by red-folder news today, each with its event times."""
+    """The day's standout pairs: where BOTH currencies have red-folder news
+    (two catalysts = highest volatility). Returns None when there are none, so the
+    section is simply omitted rather than restating single-currency events."""
     if not events:
         return None
-    news_ccys = {cur for _w, cur, *_ in events}
-    pairs = set()
-    for c in news_ccys:
-        if c in PAIR_ORDER:
-            for other in PAIR_ORDER:           # pair it against every other major
-                if other != c:
-                    pairs.add(_pair_name(c, other))
-        elif c != "USD":                       # exotic currency (e.g. CNY): pair vs USD
-            pairs.add(_pair_name(c, "USD"))
+    majors = sorted({c for _w, c, *_ in events if c in PAIR_ORDER}, key=PAIR_ORDER.index)
+
+    pairs = []
+    for i in range(len(majors)):                  # both sides in the news = a "top pair"
+        for j in range(i + 1, len(majors)):
+            pairs.append(_pair_name(majors[i], majors[j]))
+    if not pairs:                                 # fewer than two currencies in play
+        return None
 
     rows = []
     for p in pairs:
@@ -284,26 +385,34 @@ def pairs_schedule(events):
         seen_stamps, stamp_list = set(), []
         for w, cur in times:
             s = f"{stamp_compact(w)} ({cur})"
-            if s not in seen_stamps:          # collapse two events at the same minute
+            if s not in seen_stamps:              # collapse two events at the same minute
                 seen_stamps.add(s)
                 stamp_list.append(s)
         if stamp_list:
             rows.append((len(stamp_list), p, ", ".join(stamp_list)))
-    rows.sort(key=lambda r: (-r[0], r[1]))     # busiest pairs first, then alphabetical
-    body = "\n".join(f"**{p}** \u2014 {stamps}" for _n, p, stamps in rows)
-    return (f"\U0001F4C5 **Pairs in play ({TZ_LABEL} / {SECOND_LABEL}):**\n\n" + body)
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (-r[0], r[1]))        # busiest pairs first, then alphabetical
+    body = "\n".join(f"**{p}**: {stamps}" for _n, p, stamps in rows)
+    return (f"\U0001F3AF **Top pairs today ({TZ_LABEL} / {SECOND_LABEL}):**\n"
+            f"_Both currencies in each pair have red-folder news today, so the pair gets "
+            f"hit from both sides. Two catalysts on one chart tend to drive the biggest, "
+            f"cleanest moves. This is where the day's volatility and opportunity "
+            f"are concentrated._\n\n" + body)
 
 
 def pick_quote(now):
-    return QUOTES[now.timetuple().tm_yday % len(QUOTES)]
+    # toordinal() increments by exactly 1 each calendar day, so consecutive days
+    # always get the next quote -- no repeats within len(QUOTES) days, and no
+    # year-boundary glitch.
+    return QUOTES[now.toordinal() % len(QUOTES)]
 
 
 def build_message(events, heads, now, ev_err="", hd_err=""):
     """Build the embed body (everything except the @everyone greeting line)."""
     events = sorted(events, key=lambda e: e[0])      # always render in time order
     date_str = now.strftime("%A, %B ") + str(now.day) + now.strftime(", %Y")
-    header = f"{BRIEF_TITLE} | {date_str}"
-    rule = "\u25AC" * max(12, round((len(header) + 2) / 1.78))   # spans the header line
+    rule = "\u25AC" * RULE_LENGTH                  # fixed length so it never wraps on mobile
 
     sections = [f"\U0001F4F0 **{BRIEF_TITLE}** | {date_str}\n{rule}"]
 
@@ -405,24 +514,30 @@ def delete_message(message_id):
             raise
 
 
-def read_ids():
+def read_state():
+    """Return {'ids': [...], 'posted_date': 'YYYY-MM-DD' or None}, tolerating old formats."""
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             raw = f.read().strip()
     except FileNotFoundError:
-        return []
+        return {"ids": [], "posted_date": None}
     if not raw:
-        return []
+        return {"ids": [], "posted_date": None}
     try:
         data = json.loads(raw)
-        return [str(x) for x in data] if isinstance(data, list) else [str(data)]
     except ValueError:
-        return [raw]            # backward-compat with old single-id files
+        return {"ids": [raw], "posted_date": None}          # old bare-id file
+    if isinstance(data, list):                              # old list-of-ids file
+        return {"ids": [str(x) for x in data], "posted_date": None}
+    if isinstance(data, dict):
+        return {"ids": [str(x) for x in data.get("ids", [])],
+                "posted_date": data.get("posted_date")}
+    return {"ids": [str(data)], "posted_date": None}
 
 
-def write_ids(ids):
+def write_state(ids, posted_date):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(ids), f)
+        json.dump({"ids": list(ids), "posted_date": posted_date}, f)
 
 
 # --------------------------------------------------------------------------- main
@@ -431,9 +546,20 @@ def main():
         sys.exit("ERROR: set the DISCORD_WEBHOOK_URL environment variable.")
 
     now = dt.datetime.now(TZ)
-    if EXPECTED_HOUR and str(now.hour) != EXPECTED_HOUR:
-        print(f"Local hour {now.hour} != EXPECTED_LOCAL_HOUR {EXPECTED_HOUR}; skipping.")
-        return
+    today = now.strftime("%Y-%m-%d")
+    state = read_state()
+
+    # Gate (skipped for manual/forced runs): wait until at/after POST_HOUR local
+    # time, and only post once per local day. This makes the brief land at ~5am UK
+    # whenever GitHub actually runs the job -- on time or hours late -- without ever
+    # posting twice, no matter how many scheduled runs fire.
+    if not FORCE_POST:
+        if now.hour < POST_HOUR:
+            print(f"Local hour {now.hour} < POST_HOUR {POST_HOUR}; too early, skipping.")
+            return
+        if ONCE_PER_DAY and state["posted_date"] == today:
+            print(f"Already posted today ({today}); skipping.")
+            return
 
     try:
         events, ev_err = get_economic_events(), ""
@@ -451,14 +577,16 @@ def main():
     body = build_message(events, heads, now, ev_err, hd_err)
     embed_bodies = chunk_message(body, 4096)          # embeds allow up to 4096 chars each
 
-    old = read_ids()
+    old = state["ids"]
     if old:
         for mid in old:
             delete_message(mid)
         print(f"Deleted {len(old)} previous message(s).")
 
     new_id = post(GREETING, embed_bodies)
-    write_ids([new_id] if new_id else [])
+    # A forced/manual run posts but does NOT claim the day, so it won't suppress
+    # the real scheduled brief; a scheduled run records today's date.
+    write_state([new_id] if new_id else [], state["posted_date"] if FORCE_POST else today)
     print(f"Posted brief (1 message, {len(embed_bodies)} embed(s)): "
           f"{len(events)} event(s), {len(heads)} headline(s).")
 
