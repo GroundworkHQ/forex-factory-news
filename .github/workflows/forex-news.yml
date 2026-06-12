@@ -1,22 +1,18 @@
 name: Morning Forex Brief
 
-# Posts once each morning at ~4am UK. The script's gate posts ONCE per day, only
-# at or after 4am UK, so any trigger that fires in the morning window posts -- and
-# duplicates are impossible (later triggers see "already posted today" and skip).
+# Posts once each morning at 4:05am UK. The script's gate posts ONCE per day, only
+# at or after 4am UK, so the trigger can never double-post (a second fire on the
+# same day sees "already posted today" and skips).
 #
-# PRIMARY  -> repository_dispatch, fired ON TIME by an external scheduler such as
-#             cron-job.org. GitHub runs a dispatched workflow within seconds, so
-#             the timing is precise -- unlike GitHub's own cron. Runs GATED.
-# BACKUP   -> GitHub's schedule (below). Best-effort and often delayed, but if the
-#             external trigger ever fails, one of these still posts. Runs GATED.
-# MANUAL   -> the "Run workflow" button; posts immediately for testing (forced).
+# SCHEDULED -> repository_dispatch, fired ON TIME by an external scheduler
+#              (cron-job.org) that hits the GitHub API at 4:05am UK. GitHub runs a
+#              dispatched workflow within seconds, so the timing is precise --
+#              unlike GitHub's own cron, which is best-effort and often hours late.
+#              Runs GATED.
+# MANUAL    -> the "Run workflow" button; posts immediately for testing (forced).
 on:
-  repository_dispatch:         # PRIMARY: external scheduler hits the GitHub API
+  repository_dispatch:         # external scheduler (cron-job.org) hits the GitHub API at 4:05am UK
     types: [post-brief]
-  schedule:                    # BACKUP only: GitHub cron is best-effort / often late
-    - cron: "11 3 * * *"
-    - cron: "11 4 * * *"
-    - cron: "11 5 * * *"
   workflow_dispatch: {}        # manual test run; posts immediately (FORCE_POST below)
 
 jobs:
