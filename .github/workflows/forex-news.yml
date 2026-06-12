@@ -1,16 +1,19 @@
 name: Morning Forex Brief
 
-# Aim: post once each morning at ~4:11am UK time.
-# GitHub cron is UTC and can't do timezones, so we fire a few times across the
-# early-morning window (off the top of the hour, which is less congested and
-# tends to be delayed less). The script's own gate posts ONCE per day, only at
-# or after 4am UK -- so whichever run GitHub executes first (on time or late)
-# posts, and the rest skip. No double posts, and it self-heals if GitHub delays
-# or drops a run.
-#   03:11 UTC = 4:11am BST (summer)   |   04:11 UTC = 4:11am GMT (winter)
-#   05:11 UTC = backup if the earlier run is delayed/dropped
+# Posts once each morning at ~4am UK. The script's gate posts ONCE per day, only
+# at or after 4am UK, so any trigger that fires in the morning window posts -- and
+# duplicates are impossible (later triggers see "already posted today" and skip).
+#
+# PRIMARY  -> repository_dispatch, fired ON TIME by an external scheduler such as
+#             cron-job.org. GitHub runs a dispatched workflow within seconds, so
+#             the timing is precise -- unlike GitHub's own cron. Runs GATED.
+# BACKUP   -> GitHub's schedule (below). Best-effort and often delayed, but if the
+#             external trigger ever fails, one of these still posts. Runs GATED.
+# MANUAL   -> the "Run workflow" button; posts immediately for testing (forced).
 on:
-  schedule:
+  repository_dispatch:         # PRIMARY: external scheduler hits the GitHub API
+    types: [post-brief]
+  schedule:                    # BACKUP only: GitHub cron is best-effort / often late
     - cron: "11 3 * * *"
     - cron: "11 4 * * *"
     - cron: "11 5 * * *"
